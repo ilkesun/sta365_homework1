@@ -1,0 +1,116 @@
+---
+title: "STA365 HW1"
+author: "Ilke Sun"
+date: "06/02/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(cmdstanr)
+library(posterior) 
+library(tidyverse)
+library(bayesplot)
+library(ggplot2)
+library(loo)
+```
+
+## I Data and Variables Setup
+
+Firstly, we will read our data into R. 
+```{r}
+data <- readRDS("hw1_data.RDS")
+t <- data$t
+y <- data$y
+```
+
+## II Visualization
+
+The graphs and summaries below helped me decide on my priors.
+```{r}
+summary(t)
+summary(y)
+lm0 <- lm(y ~ t)
+
+hist(t,
+     freq = F,
+     xlab = "t",
+     main = "Histogram of t")
+hist(y,
+     freq = F,
+     xlab = "y",
+     main = "Histogram of y")
+
+plot(y ~ t,
+     pch = 20,
+     main = "Scatterplot of t and y",
+     xlab = "t",
+     ylab = "y")
+abline(lm0, col = 2, lty = 2, lw = 3)
+```
+
+## III Setting Priors
+
+For the first model, I have chosen a normal prior distribution. The reason behind this intuition was the normality behind normality that is when normal likelihood function is a continuous distribution then normal distribution with a know variance $\sigma$ has a normal conjugate prior. Also, as we can see from the plot above, where the red-dashed-line is the line fitted with OLS method that the linear regression fits not too badly. After looking at the regression results summary we can see that the both intercept and slope coefficient is statistically significant. From the plot above, it is also observable that towards the extreme values the error tends to be higher. In order to account for this I have enlarged $\tau_\sigma$ where $\sigma \sim (0,\tau_\sigma)$, I believed that higher variance for the normally distributed sigma may help account for the greater error towards the extreme values. In addition, to these we also know that $t_i$ will always be between [-1, 2.5], hence in my Stan code I have limited the value to be in that range. I have also bounded $\beta$ in my Stan code because we expect the relationship between the covariate and the observation to be negative. Like $\sigma$, $\alpha$ and $\beta$ are also normally distributed with mean 0 and variances $\tau_\alpha$ and $\tau_\beta$ respectively. I have decided on these $\tau$ values by using the regression summary and some other observations. Firstly, I thought that $\tau_\alpha$ and $\tau_\beta$ will be close to standard errors that correspond to the coefficients in the linear regression. I have finalized setting these parameters by doing MCMC checks for $\mu^*_i$ and $y^*_i$ and comparing them to what we know such as values above the value 50 is very unlikely. For the second model, I have chosen a lognormal prior distribution. As we observe from the likelihood in the instructions now $\mu = \alpha + \beta t_i$ and the likelihood is $\log(y_i) \sim N(\alpha + \beta t_i, \sigma^2)$. I have, again, used the information that was given in the instructions (i.e., t always between [-1,2.5] and we expect a negative relationship). Also, in order to keep the model in natural scale so that we can compare it with Model 1, I have modified $\mu$ in my Model 1 Stan code to $\log(\mu)$. Even though now our prior is lognormal, the conjugate prior for the lognormal is the same for the normal distribution. Hence, I have $\alpha$, $\beta$ and $\sigma$ normally distributed as well. Like the previous model I have decided on $\tau$ values by looking at the data and the plots on Part 1. For the precise values, I have looked at the MCMC checks for $\log(\mu^*_i)$ and $y^*_i$.
+
+
+## IV Modelling
+### Model 1
+```{r}
+writeLines(readLines("mod1.stan"))
+mod1 <- cmdstan_model("mod1.stan", compile = T)
+
+data_list <- list(N = 100, y = y, t = t, tau_a = 0.3,
+                  tau_b = 0.6, tau_s = 2, only_prior = 1)
+
+fit1 <- mod1$sample(data_list, set.seed(333), refresh = 0, show_messages = T)
+mcmc_hist(fit1$draws(c("mu[59]","mu[64]","mu[81]")))
+mcmc_hist(fit1$draws(c("y_pred[59]","y_pred[64]","y_pred[81]")))
+fit1$print(max_rows = 20)
+
+data_list$only_prior = 0
+
+fit2 <- mod1$sample(data_list, set.seed(333), refresh = 0, show_messages = F)
+fit2$summary()
+mcmc_hist(fit2$draws(c("mu[59]","mu[64]","mu[81]")))
+mcmc_hist(fit2$draws(c("y_pred[59]","y_pred[64]","y_pred[81]")))
+
+
+loo2 <- fit2$loo(save_psis = T)
+print(loo2)
+plot(loo2)
+rm(data_list, fit1)
+```
+
+### Model 2
+```{r}
+writeLines(readLines("mod2.stan"))
+mod2 <- cmdstan_model("mod2.stan", compile = T)
+
+data_list <- list(N = 100, y = y, t = t, tau_a = 0.3,
+                  tau_b = 0.6, tau_s = 2, only_prior = 1)
+
+fit3 <- mod2$sample(data_list, set.seed(333), refresh = 0, show_messages = T)
+mcmc_hist(fit3$draws(c("log_mu[59]","log_mu[64]","log_mu[81]")))
+mcmc_hist(fit3$draws(c("y_pred[9]","y_pred[64]","y_pred[81]")))
+fit3$print(max_rows = 20)
+
+data_list$only_prior = 0
+
+fit4 <- mod2$sample(data_list, set.seed(333), refresh = 0, show_messages = T)
+fit4$summary()
+mcmc_hist(fit4$draws(c("log_mu[59]","log_mu[64]","log_mu[81]")))
+mcmc_hist(fit4$draws(c("y_pred[59]","y_pred[64]","y_pred[81]")))
+
+loo4 <- fit4$loo(save_psis = T)
+print(loo4)
+plot(loo4)
+rm(data_list, fit3)
+```
+
+## Comparing Models
+```{r}
+loo_compare(loo2, loo4)
+```
+
+Both of these models have appropriate r-hats and ESS bulk. In all of our output r-hat is around 1 and ESS bulk is way above 500, most greater than 2000. We have considered these to be basic checks for an appropriate model which both of these models have passed. However, after looking at our posterior checks we have observed that Model 1 seems to fit to our data better. Model 1 has the appropriate centralization and the spread in the histogram outputs above whereas the Model 2 had a spread that was unnecessarily large. In the second model, the $y^*_i$ has more negative values most probably because of this greater spread. Nevertheless, the first model did not have much negative values as we have expected and the $y^*_i$ was in range of the data given to us, hence, the model probably had better and more accurate priors which have caused our Stan code to fit the data more accurately. Considering, that our mean of $y$ is approximately 7.86 and natural log of that is approximately 2.06 we have expected $\mu$ and $\log(\mu)$ to be relatively close to these numbers. In our posterior checks, $\mu$ compared to $\log(\mu)$ had values much closer to the original mean and in the similar range. In order to be sure of my predictions, I have used leave one out cross validation and Pareto k diagnostic values. As can be observed from the PSIS plots above, all of my values are a good fit without exceptions, that is to say there are not any Pareto k values above 0.5 for either one of the models. Both models had similar standard errors in the leave one out cross validation but Model 1 had higher expected log pointwise predictive density (ELDP). This value is a sum of the N observations pointwise log predictive densities and it is either 0 or negative. When we compare the ELDPs corresponding to each of these models we observe a difference of 324.9. In addition, when we compare p_loos corresponding to each model, which is the effectiveness of the parameters in the model, we observe that Model 1 has 5 times greater value. Thus, we can conclude that one of these models is better than the other one, and that is Model 1. 
